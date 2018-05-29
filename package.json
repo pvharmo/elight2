@@ -1,0 +1,14 @@
+{
+  "name": "elight",
+  "version": "1.0.0",
+  "description": "",
+  "main": "./server/server.js",
+  "scripts": {
+    "client": "./client/node_modules/.bin/webpack-dev-server --config ./webpack/webpack.dev.config.js",
+    "server": "node ./server/server.js",
+    "dev": "npm run server && npm run client",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
