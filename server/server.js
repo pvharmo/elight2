@@ -12,7 +12,7 @@ const sequelize = new Sequelize('sportsla_elight', 'sportsla_elight', '3raG(0n)'
     acquire: 30000,
     idle: 10000
   },
-  dialectOptions: { decimalNumbers: true, lc_time_names : 'fr_FR' },
+  dialectOptions: { decimalNumbers: true},
 
   // http://docs.sequelizejs.com/manual/tutorial/querying.html#operators
   operatorsAliases: false
@@ -21,7 +21,6 @@ const sequelize = new Sequelize('sportsla_elight', 'sportsla_elight', '3raG(0n)'
 sequelize
 .authenticate()
 .then(() => {
-  sequelize.query("SET lc_time_names = 'fr_CA';")
   console.log('Connection has been established successfully.');
 })
 .catch(err => {
@@ -42,7 +41,11 @@ function cols(employe) {
   for(key in employe) {
     if (key != "id") {
       if (isNaN(employe[key])) {
-        cols += key + " = \"" + employe[key] + "\", ";
+        if (employe[key].match(/^\d\d\d\d-\d\d-\d\d$/)) {
+          cols += key + " = DATE(\"" + employe[key] + "\"), ";
+        } else {
+          cols += key + " = \"" + employe[key] + "\", ";
+        }
       } else if (employe[key] === undefined || employe[key]  === null || employe[key] === "") {
         cols += key + " = NULL, ";
       } else {
@@ -65,7 +68,11 @@ function colsPaie(employe) {
       cols += "employe = " + Number(employe[key]) + ", ";
     } else if (infosPaie.includes(key)) {
       if (isNaN(employe[key])) {
-        cols += key + " = \"" + employe[key] + "\", ";
+        if (employe[key].match(/^\d\d\d\d-\d\d-\d\d$/)) {
+          cols += key + " = DATE(\"" + employe[key] + "\"), ";
+        } else {
+          cols += key + " = \"" + employe[key] + "\", ";
+        }
       } else {
         cols += key + " = " + Number(employe[key]) + ", ";
       }
@@ -112,12 +119,12 @@ function nouvellePaie(employe, datePaie) {
   sequelize.query("INSERT INTO paie SET date_paie=DATE('" + datePaie + "'), " + colsPaie(employe) + ";");
 }
 
-function nouveauMembre(membre, date) {
-  sequelize.query("INSERT INTO membre SET " + cols(membre) + ";").then(
-    sequelize.query("INSERT INTO renouvellement SET membre=" + membre.id +
-    ", date_renouvellement=" + date +
-    ", regulier=" + membre.regulier + ", inscription=TRUE")
-  );
+function nouveauMembre(infosMembre, inscription) {
+  sequelize.query("INSERT INTO membre SET " + cols(infosMembre) + ";").then((membre) => {
+    sequelize.query("INSERT INTO renouvellement SET membre=" + membre[0] +
+      ", date_renouvellement=DATE(\"" + inscription.date_renouvellement +
+      "\"), regulier=" + infosMembre.regulier + ", inscription=TRUE, dons=" + inscription.dons + ";");
+  });
 }
 
 function renouvellement(membre, date) {
@@ -177,7 +184,12 @@ io.on('connection', function (client) {
     sequelize.query("SELECT " + infosPaiesMois + " FROM paie INNER JOIN employe ON employe.id = paie.employe WHERE YEAR(date_paie) = " + annee + " AND employe.type_emploi = 'Employé' GROUP BY MONTH(date_paie);")
     .then((res) => client.emit('set-das', res[0]));
   });
-  client.on('nouveauMembre', (membre, date) => nouveauMembre(membre, date));
+  client.on('nouveau-membre', (membre, inscription) => nouveauMembre(membre, inscription));
+  client.on('get-liste-membre', ()=>{
+    sequelize.query("SELECT * FROM membre").then((res)=>{
+      socket.emit('set-liste-membres', res[0]);
+    });
+  });
 });
 
 io.listen(3001);
