@@ -195,7 +195,7 @@ function getMenus(menu, client) {
     });
   } else {
     sequelize.query("SELECT * FROM menu;").then((values)=>{
-      client.emit("set-menus", values[0]);
+      client.emit("set-menus-liste", values[0]);
     });
   }
 }
@@ -216,8 +216,17 @@ const infosPaiesMois = "MONTHNAME(date_paie) AS date_paie, SUM(paie.heures_trava
 /******************************** socket.io ***********************************/
 
 
+const authenticate = (client, password, callback) => {
+  try {
+    callback(null, password = "addsqm-301");
+  } catch (error) {
+    callback(error);
+  }
+};
 
-io.on('connection', function (client) {
+const postAuthenticate = client => {
+  console.log("test");
+  client.emit("test");
   client.on('chercherEmployes', () => {
     sequelize.query("SELECT * FROM employe").then(res => client.emit('employes', res));
   });
@@ -235,7 +244,7 @@ io.on('connection', function (client) {
   client.on('get-infos-paies-mensuelles', (employe, annee) => {
     if (employe) {
       sequelize.query("SELECT " + infosPaiesMois + " FROM paie WHERE employe = " + employe +
-        " AND YEAR(date_paie) = " + annee + " GROUP BY MONTH(date_paie);").then(res => {
+      " AND YEAR(date_paie) = " + annee + " GROUP BY MONTH(date_paie);").then(res => {
         client.emit('set-infos-paies-mensuelles', res);
       });
     }
@@ -286,6 +295,9 @@ io.on('connection', function (client) {
       client.emit("error-saving", "danger", "Houston, nous avons un problème");
     });
   });
+  client.on("supprimer-depannage", (id)=>{
+    sequelize.query("DELETE FROM depannage WHERE id=" + id);
+  });
   client.on("enregistrer-depannage", (depannage)=>{
     sequelize.query("UPDATE depannage SET " + cols(depannage) + " WHERE id=" + depannage.id + ";").then(function() {
       client.emit("error-saving", "success", "Un petit pas pour l'homme, un grand pas pour l'humanité");
@@ -324,18 +336,10 @@ io.on('connection', function (client) {
       getMenus(false, client);
     });
   });
-});
-
-io.listen(3001);
-
-const authenticate = async (client, password, callback) => {
-  try {
-   callback(null, password = "addsqm-301");
-  } catch (error) {
-    callback(error);
-  }
-};
+}
 
 const socketioAuth = require("socketio-auth");
 
-socketioAuth(io, { authenticate, timeout: 30*60*1000 });
+socketioAuth(io, { authenticate, postAuthenticate, timeout: 30*60*1000 });
+
+io.listen(3001);
