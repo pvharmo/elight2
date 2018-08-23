@@ -33,6 +33,26 @@ app.use(async ctx => {
 
 var io = require('socket.io').listen(app);
 
+/*************************** Cron *********************************************/
+
+var cron = require('node-cron');
+const mysqldump = require('mysqldump');
+
+cron.schedule('0,15,30,45 * * * * *', function(){
+//   mysqldump({
+//     connection: {
+//         host: 'sports-lamitis.com',
+//         user: 'sportsla_elight',
+//         password: '3raG(0n)',
+//         database: 'sportsla_elight',
+//     },
+//     dumpToFile: './dump.sql',
+//     dump: {
+//       tables:[]
+//     }
+//   });
+});
+
 /*************************** Fonctions ****************************************/
 
 function cols(employe) {
@@ -55,6 +75,27 @@ function cols(employe) {
   }
   return cols.slice(0,-2);
 }
+
+// function cols(champs, valeurs) {
+//   let cols = "";
+//   let col = "";
+//   for(key in champs) {
+//     if (key != "id") {
+//       if (isNaN(valeurs[key])) {
+//         if (valeurs[key].match(/^\d\d\d\d-\d\d-\d\d$/)) {
+//           cols += key + " = DATE(\"" + valeurs[key] + "\"), ";
+//         } else {
+//           cols += key + " = \"" + valeurs[key] + "\", ";
+//         }
+//       } else if (valeurs[key] === undefined || valeurs[key]  === null || valeurs[key] === "") {
+//         cols += key + " = NULL, ";
+//       } else {
+//         cols += key + " = " + Number(valeurs[key]) + ", ";
+//       }
+//     }
+//   }
+//   return cols.slice(0,-2);
+// }
 
 function colsPaie(employe) {
   let cols = "";
@@ -98,16 +139,12 @@ function colsMembre(membre) {
   return cols.slice(0,-2);
 }
 
-function colsInscription(date, membre) {
-
-}
-
 function enregistrerEmploye(employe, client) {
   sequelize.query("UPDATE employe SET " + cols(employe) + " WHERE id = " + employe.id).then(function() {
     client.emit("error-saving", "success", "Enregistré");
   }).catch(function (err) {
     console.error(err);
-    client.emit("error-saving", "danger", "Une erreur est survenue.");
+    client.emit("error-saving", "danger", "Houston, nous avons un problème");
   });
 }
 
@@ -119,18 +156,48 @@ function nouvellePaie(employe, datePaie) {
   sequelize.query("INSERT INTO paie SET date_paie=DATE('" + datePaie + "'), " + colsPaie(employe) + ";");
 }
 
-function nouveauMembre(infosMembre, inscription) {
+function nouveauMembre(infosMembre, inscription, client) {
   sequelize.query("INSERT INTO membre SET " + cols(infosMembre) + ";").then((membre) => {
     sequelize.query("INSERT INTO renouvellement SET membre=" + membre[0] +
       ", date_renouvellement=DATE(\"" + inscription.date_renouvellement +
-      "\"), regulier=" + infosMembre.regulier + ", inscription=TRUE, dons=" + inscription.dons + ";");
+      "\"), regulier=" + infosMembre.regulier + ", inscription=TRUE, dons=" + inscription.dons + ";")
+        .then(getMembres(client));
   });
 }
 
-function renouvellement(membre, date) {
-  sequelize.query("INSERT INTO renouvellement SET membre=" + membre.id +
-    ", date_renouvellement=" + date +
-    ", regulier=" + membre.regulier + ", inscription=FALSE");
+function renouveller(id, infos, regulier, client) {
+  sequelize.query("INSERT INTO renouvellement SET membre=" + id +
+    ", date_renouvellement=DATE(\"" + infos.date_renouvellement +
+    "\"), regulier=" + regulier + ", inscription=FALSE, dons=" + infos.dons + ", commentaires=\"" + infos.commentaires + "\";").then(()=>{
+
+      getRenouvellements(id, client);
+    });
+}
+
+function getMembres(client) {
+  sequelize.query("SELECT * FROM membre").then((res)=>{
+    client.emit('set-liste-membres', res[0]);
+  });
+}
+
+function getRenouvellements(id, client) {
+  renouvellement = {renouvellement: "", inscription: ""};
+  const query = "SELECT id, date_renouvellement, commentaires, regulier, dons FROM renouvellement WHERE membre=" + id + " ORDER BY date_renouvellement DESC";
+  sequelize.query(query).then((res)=>{
+    client.emit('set-liste-renouvellements', res[0]);
+  });
+}
+
+function getMenus(menu, client) {
+  if (menu) {
+    sequelize.query("SELECT etiquette AS label, valeur AS value, nom_menu FROM menu WHERE nom_menu IN (\"" + menu.join("\",\"") + "\") AND archive=0 ORDER BY nom_menu").then((values)=>{
+      client.emit("set-menus", values[0]);
+    });
+  } else {
+    sequelize.query("SELECT * FROM menu;").then((values)=>{
+      client.emit("set-menus", values[0]);
+    });
+  }
 }
 
 /******************************* Variables ************************************/
@@ -184,10 +251,77 @@ io.on('connection', function (client) {
     sequelize.query("SELECT " + infosPaiesMois + " FROM paie INNER JOIN employe ON employe.id = paie.employe WHERE YEAR(date_paie) = " + annee + " AND employe.type_emploi = 'Employé' GROUP BY MONTH(date_paie);")
     .then((res) => client.emit('set-das', res[0]));
   });
-  client.on('nouveau-membre', (membre, inscription) => nouveauMembre(membre, inscription));
-  client.on('get-liste-membre', ()=>{
-    sequelize.query("SELECT * FROM membre").then((res)=>{
-      socket.emit('set-liste-membres', res[0]);
+  client.on('nouveau-membre', (membre, inscription) => nouveauMembre(membre, inscription, client));
+  client.on('get-liste-membres', ()=>{getMembres(client)});
+  client.on('supprimer-membre', (id)=>{
+    sequelize.query("DELETE FROM membre WHERE id=" + id + ";").then(getMembres(client));
+  });
+  client.on('get-liste-renouvellement', (id)=>{
+    getRenouvellements(id, client);
+  });
+  client.on("renouvellement", (id, infos, regulier)=>{
+    renouveller(id, infos, regulier, client);
+  });
+  client.on('supprimer-renouvellement', (id, membre) => {
+    sequelize.query("DELETE FROM renouvellement WHERE id=" + id + ";").then(getRenouvellements(membre, client)).then(function() {
+      client.emit("error-saving", "success", "Supprimé");
+    }).catch(function (err) {
+      console.error(err);
+      client.emit("error-saving", "danger", "Houston, nous avons un problème");
+    });
+  });
+  client.on('modifier-membre', (infosMembre)=>{
+    sequelize.query("UPDATE membre SET " + cols(infosMembre) + " WHERE id=" + infosMembre.id).then(function() {
+      client.emit("error-saving", "success", "Un petit pas pour l'homme, un grand pas pour l'humanité");
+    }).catch(function (err) {
+      console.error(err);
+      client.emit("error-saving", "danger", "Houston, nous avons un problème");
+    });
+  });
+  client.on("nouveau-depannage", (depannage)=>{
+    sequelize.query("INSERT INTO depannage SET " + cols(depannage) + ";").then(function() {
+      client.emit("error-saving", "success", "Un petit pas pour l'homme, un grand pas pour l'humanité");
+    }).catch(function (err) {
+      console.error(err);
+      client.emit("error-saving", "danger", "Houston, nous avons un problème");
+    });
+  });
+  client.on("enregistrer-depannage", (depannage)=>{
+    sequelize.query("UPDATE depannage SET " + cols(depannage) + " WHERE id=" + depannage.id + ";").then(function() {
+      client.emit("error-saving", "success", "Un petit pas pour l'homme, un grand pas pour l'humanité");
+    }).catch(function (err) {
+      console.error(err);
+      client.emit("error-saving", "danger", "Houston, nous avons un problème");
+    });
+  });
+  client.on("get-depannages", ()=>{
+    sequelize.query("SELECT prenom, nom, service_utilise, id FROM depannage ").then((res)=>{
+      client.emit("set-depannages", res[0]);
+    });
+  });
+  client.on("nouvelle-option", (values)=>{
+    sequelize.query("INSERT INTO menu SET " + cols(values) + ";").then(function() {
+      client.emit("error-saving", "success", "C'est un grand pas pour l'homme");
+    }).catch(function (err) {
+      console.error(err);
+      client.emit("error-saving", "danger", "Houston, nous avons un problème");
+    });
+  });
+  client.on("enregistrer-option", (values)=>{
+    sequelize.query("UPDATE menu SET " + cols(values) + " WHERE id=" + values.id).then(function() {
+      client.emit("error-saving", "success", "Un petit pas pour l'homme, un grand pas pour l'humanité");
+      getMenus(false, client);
+    }).catch(function (err) {
+      console.error(err);
+      client.emit("error-saving", "danger", "Houston, nous avons un problème");
+    });
+  });
+  client.on("get-menus", (menu)=>{
+    getMenus(menu, client);
+  });
+  client.on("supprimer-option", (id)=>{
+    sequelize.query("DELETE FROM menu WHERE id="+ id).then(()=>{
+      getMenus(false, client);
     });
   });
 });
